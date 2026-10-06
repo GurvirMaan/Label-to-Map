@@ -39,21 +39,27 @@
 <div class="card">
   <label for="addr"><b>Address</b> (fix any mistakes)</label>
   <textarea id="addr" placeholder="Photo text appears here, or type an address"></textarea>
-  <a id="map" class="btn" href="#" target="_blank" rel="noopener">Open in Maps</a>
+  <a id="map" class="btn" href="#" target="_blank" rel="noopener">Open in Google Maps</a>
+  <a id="apple" class="btn" href="#" target="_blank" rel="noopener" style="background:#14212b">Open in Apple Maps</a>
   <button class="alt" id="clear">Clear</button>
 </div>
 
 <script>
 const cam = document.getElementById('cam'), addr = document.getElementById('addr'),
       status = document.getElementById('status'), preview = document.getElementById('preview'),
-      mapBtn = document.getElementById('map'), raw = document.getElementById('raw');
+      mapBtn = document.getElementById('map'), raw = document.getElementById('raw'), appleBtn = document.getElementById('apple');
 
 const POSTAL = /[A-Z][0-9O][A-Z]\s?[0-9O][A-Z][0-9O]/i;
 
 function updateLink() {
   const q = addr.value.replace(/\s*\n\s*/g, ', ').trim();
-  mapBtn.href = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(q);
+  const e = encodeURIComponent(q);
+  mapBtn.href = q ? 'https://www.google.com/maps/dir/?api=1&destination=' + e : '#';
+  appleBtn.href = q ? 'https://maps.apple.com/?dirflg=d&daddr=' + e : '#';
 }
+[mapBtn, appleBtn].forEach(b => b.addEventListener('click', ev => {
+  if (!addr.value.trim()) { ev.preventDefault(); status.textContent = 'Address box is empty. Take a photo or type the address first.'; }
+}));
 addr.addEventListener('input', updateLink);
 updateLink();
 
