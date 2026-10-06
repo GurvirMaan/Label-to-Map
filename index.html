@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Label to Map</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+<style>
+  :root { --bg:#f3f5f7; --ink:#14212b; --accent:#d52b1e; --card:#fff; --line:#cfd8df; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10181e; --ink:#eef2f5; --card:#1a252d; --line:#33434f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--ink);
+         font:17px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; max-width:520px; margin-inline:auto; }
+  h1 { font-size:22px; margin:4px 0 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px; }
+  button, .btn { display:block; width:100%; padding:16px; border:0; border-radius:10px; font-size:18px;
+         font-weight:700; text-align:center; text-decoration:none; background:var(--accent); color:#fff; margin-top:10px; }
+  button.alt { background:transparent; color:var(--ink); border:2px solid var(--line); }
+  textarea { width:100%; min-height:90px; padding:10px; font:inherit; border-radius:8px;
+         border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  #preview { max-width:100%; border-radius:8px; display:none; margin-bottom:8px; }
+  #status { font-size:15px; opacity:.75; margin-top:8px; min-height:1.4em; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<h1>Label to Map</h1>
+
+<div class="card">
+  <label class="btn" for="cam" style="margin-top:0">Photograph label</label>
+  <input id="cam" type="file" accept="image/*" capture="environment">
+  <div id="status"></div>
+  <img id="preview" alt="Label photo">
+</div>
+
+<div class="card">
+  <label for="addr"><b>Address</b> (fix any mistakes)</label>
+  <textarea id="addr" placeholder="Photo text appears here, or type an address"></textarea>
+  <a id="map" class="btn" href="#" target="_blank" rel="noopener">Open in Maps</a>
+  <button class="alt" id="clear">Clear</button>
+</div>
+
+<script>
+const cam = document.getElementById('cam'), addr = document.getElementById('addr'),
+      status = document.getElementById('status'), preview = document.getElementById('preview'),
+      mapBtn = document.getElementById('map');
+
+function updateLink() {
+  const q = addr.value.replace(/\s*\n\s*/g, ', ').trim();
+  mapBtn.href = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(q);
+}
+addr.addEventListener('input', updateLink);
+updateLink();
+
+// Keep lines that look like address parts: street number, postal code (A1A 1A1), or city/province.
+function pickAddress(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const postal = /[A-Z]\d[A-Z]\s?\d[A-Z]\d/i;
+  const street = /^\d+[\w-]*\s+\S+/;
+  const idx = lines.findIndex(l => postal.test(l));
+  if (idx >= 0) {
+    const start = Math.max(0, idx - 2);
+    return lines.slice(start, idx + 1).join('\n');
+  }
+  const s = lines.filter(l => street.test(l));
+  return (s.length ? s : lines).join('\n');
+}
+
+cam.addEventListener('change', async () => {
+  const file = cam.files[0];
+  if (!file) return;
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+  status.textContent = 'Reading label...';
+  try {
+    const { data } = await Tesseract.recognize(file, 'eng');
+    addr.value = pickAddress(data.text);
+    status.textContent = addr.value ? 'Check the address, then tap Open in Maps.' : 'No address found. Type it in.';
+  } catch (e) {
+    status.textContent = 'Could not read the photo. Type the address.';
+  }
+  updateLink();
+});
+
+document.getElementById('clear').addEventListener('click', () => {
+  addr.value = ''; preview.style.display = 'none'; status.textContent = ''; cam.value = ''; updateLink();
+});
+</script>
+</body>
+</html>
