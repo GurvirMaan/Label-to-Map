@@ -18,11 +18,12 @@
   button, .btn { display:block; width:100%; padding:16px; border:0; border-radius:10px; font-size:18px;
          font-weight:700; text-align:center; text-decoration:none; background:var(--accent); color:#fff; margin-top:10px; }
   button.alt { background:transparent; color:var(--ink); border:2px solid var(--line); }
-  textarea { width:100%; min-height:90px; padding:10px; font:inherit; border-radius:8px;
+  textarea, input[type=text] { width:100%; min-height:90px; padding:10px; font:inherit; border-radius:8px;
          border:1px solid var(--line); background:var(--bg); color:var(--ink); }
   #preview { max-width:100%; border-radius:8px; display:none; margin-bottom:8px; }
   #status { font-size:15px; opacity:.75; margin-top:8px; min-height:1.4em; }
   input[type=file] { display:none; }
+  input[type=text] { margin-bottom:12px; }
 </style>
 </head>
 <body>
@@ -37,7 +38,9 @@
 </div>
 
 <div class="card">
-  <label for="addr"><b>Address</b> (fix any mistakes)</label>
+  <label for="from"><b>Starting point</b> (leave empty to use my location)</label>
+  <input id="from" type="text" placeholder="e.g. depot address">
+  <label for="addr"><b>Delivery address</b> (fix any mistakes)</label>
   <textarea id="addr" placeholder="Photo text appears here, or type an address"></textarea>
   <a id="map" class="btn" href="#" target="_blank" rel="noopener">Open in Google Maps</a>
   <a id="apple" class="btn" href="#" target="_blank" rel="noopener" style="background:#14212b">Open in Apple Maps</a>
@@ -46,56 +49,83 @@
 
 <script>
 const cam = document.getElementById('cam'), addr = document.getElementById('addr'),
+      from = document.getElementById('from'),
       status = document.getElementById('status'), preview = document.getElementById('preview'),
       mapBtn = document.getElementById('map'), raw = document.getElementById('raw'), appleBtn = document.getElementById('apple');
 
-const POSTAL = /[A-Z][0-9O][A-Z]\s?[0-9O][A-Z][0-9O]/i;
+// Canadian postal code (valid letters only, so tracking numbers don't match).
+const POSTAL = /\b[ABCEGHJ-NPRSTVXY][0-9O][ABCEGHJ-NPRSTV-Z][ -]?[0-9O][ABCEGHJ-NPRSTV-Z][0-9O]\b/i;
+
+try { from.value = localStorage.getItem('startPoint') || ''; } catch (e) {}
 
 function updateLink() {
   const q = addr.value.replace(/\s*\n\s*/g, ', ').trim();
-  const e = encodeURIComponent(q);
-  mapBtn.href = q ? 'https://www.google.com/maps/dir/?api=1&destination=' + e : '#';
-  appleBtn.href = q ? 'https://maps.apple.com/?dirflg=d&daddr=' + e : '#';
+  const o = from.value.trim();
+  const e = encodeURIComponent(q), eo = encodeURIComponent(o);
+  mapBtn.href = q ? 'https://www.google.com/maps/dir/?api=1&destination=' + e + (o ? '&origin=' + eo : '') : '#';
+  appleBtn.href = q ? 'https://maps.apple.com/?dirflg=d&daddr=' + e + (o ? '&saddr=' + eo : '') : '#';
 }
 [mapBtn, appleBtn].forEach(b => b.addEventListener('click', ev => {
+  updateLink();
   if (!addr.value.trim()) { ev.preventDefault(); status.textContent = 'Address box is empty. Take a photo or type the address first.'; }
 }));
-addr.addEventListener('input', updateLink);
+let edited = false;
+addr.addEventListener('input', () => { edited = true; updateLink(); });
+from.addEventListener('input', () => {
+  try { localStorage.setItem('startPoint', from.value); } catch (e) {}
+  updateLink();
+});
 updateLink();
 
-// Keep lines that look like address parts: street number, postal code (A1A 1A1), or city/province.
+// Returns only a real address (street line + postal line). Never dumps random text.
 function pickAddress(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const postal = POSTAL;
-  const street = /^\d+[\w-]*\s+\S+/;
+  const street = /^\d+[\w-]*\s+[A-Za-z]/;
   // Labels can show several postal codes (sender, big sort code, ship-to).
   // The ship-to city line is usually the last one and has other words on it.
   let idx = -1;
-  lines.forEach((l, i) => { if (postal.test(l) && l.length > 12) idx = i; });
-  if (idx < 0) lines.forEach((l, i) => { if (postal.test(l)) idx = i; });
-  if (idx >= 0) {
-    for (let j = idx - 1; j >= Math.max(0, idx - 4); j--) {
-      if (street.test(lines[j])) return lines[j] + '\n' + lines[idx];
-    }
-    return lines.slice(Math.max(0, idx - 1), idx + 1).join('\n');
+  lines.forEach((l, i) => { if (POSTAL.test(l) && l.length > 12) idx = i; });
+  if (idx < 0) lines.forEach((l, i) => { if (POSTAL.test(l)) idx = i; });
+  if (idx < 0) return '';
+  for (let j = idx - 1; j >= Math.max(0, idx - 4); j--) {
+    if (street.test(lines[j])) return lines[j] + '\n' + lines[idx];
   }
-  const s = lines.filter(l => street.test(l));
-  return (s.length ? s : lines).join('\n');
+  return lines.slice(Math.max(0, idx - 1), idx + 1).join('\n');
 }
 
+// Rebuild text lines from TextDetector boxes (Chrome's Google reader).
+function groupLines(items) {
+  const arr = items.map(t => ({ t: t.rawValue, x: t.boundingBox.x, y: t.boundingBox.y, h: t.boundingBox.height }));
+  arr.sort((a, b) => a.y - b.y);
+  const rows = [];
+  arr.forEach(a => {
+    const r = rows[rows.length - 1];
+    if (r && Math.abs(a.y - r.y) < 0.6 * Math.max(a.h, r.h)) r.items.push(a);
+    else rows.push({ y: a.y, items: [a] });
+  });
+  return rows.map(r => r.items.sort((a, b) => a.x - b.x).map(i => i.t).join(' ')).join('\n');
+}
+
+let runId = 0;
 cam.addEventListener('change', async () => {
   const file = cam.files[0];
   if (!file) return;
+  const id = ++runId;          // a newer photo or Clear cancels this run
+  edited = false;
   preview.src = URL.createObjectURL(file);
   preview.style.display = 'block';
   status.textContent = 'Reading label...'; raw.textContent = '';
+  let worker;
   try {
     const bmp = await createImageBitmap(file);
+    cam.value = '';
     const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
     const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
-    const worker = await Tesseract.createWorker('eng');
-    let best = { text: '', conf: -1 };
+    let detector = null;
+    try { if ('TextDetector' in window) detector = new TextDetector(); } catch (e) {}
+    let found = '', engine = '';
     for (const angle of [0, 180, 90, 270]) {
+      if (id !== runId) return;
       status.textContent = 'Reading label (rotation ' + angle + '°)...';
       const c = document.createElement('canvas');
       const sideways = angle === 90 || angle === 270;
@@ -105,6 +135,16 @@ cam.addEventListener('change', async () => {
       ctx.rotate(angle * Math.PI / 180);
       ctx.drawImage(bmp, -w / 2, -h / 2, w, h);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (detector) {
+        try {
+          const items = await detector.detect(c);
+          if (id !== runId) return;
+          const lines = groupLines(items);
+          raw.textContent += '--- Google reader ' + angle + '° ---\n' + lines + '\n';
+          found = pickAddress(lines);
+          if (found) { engine = 'Google reader'; break; }
+        } catch (e) { detector = null; }
+      }
       const img = ctx.getImageData(0, 0, c.width, c.height), px = img.data;
       for (let i = 0; i < px.length; i += 4) {
         const g = 0.3 * px[i] + 0.59 * px[i + 1] + 0.11 * px[i + 2];
@@ -112,23 +152,28 @@ cam.addEventListener('change', async () => {
         px[i] = px[i + 1] = px[i + 2] = v;
       }
       ctx.putImageData(img, 0, 0);
+      if (!worker) worker = await Tesseract.createWorker('eng');
       const { data } = await worker.recognize(c);
+      if (id !== runId) return;
       raw.textContent += '--- ' + angle + '° ---\n' + data.text + '\n';
-      if (POSTAL.test(data.text)) { best = data; break; }
-      if (data.confidence > best.conf) best = data;
+      found = pickAddress(data.text);
+      if (found) { engine = 'backup reader'; break; }
     }
-    await worker.terminate();
-    addr.value = pickAddress(best.text || '');
-    status.textContent = POSTAL.test(best.text || '')
-      ? 'Check the address, then tap Open in Maps.'
-      : 'No postal code found. Retake closer, or type it in.';
+    if (id !== runId) return;
+    if (found && !edited) addr.value = found;
+    status.textContent = found
+      ? 'Read with ' + engine + '. Check the address, then tap a Maps button.'
+      : 'No address found. Retake closer, or type it in.';
   } catch (e) {
-    status.textContent = 'Could not read the photo. Type the address.';
+    if (id === runId) status.textContent = 'Could not read the photo. Type the address.';
+  } finally {
+    if (worker) worker.terminate();
   }
-  updateLink();
+  if (id === runId) updateLink();
 });
 
 document.getElementById('clear').addEventListener('click', () => {
+  runId++; edited = false;
   addr.value = ''; preview.style.display = 'none'; status.textContent = ''; raw.textContent = ''; cam.value = ''; updateLink();
 });
 </script>
